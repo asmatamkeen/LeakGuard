@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1120" />
+  <title>LeakGuard — Subscription Leak Detector</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Tesseract.js: on-device OCR, runs fully in the browser (offline after first load) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <div class="phone-frame">
+
+    <!-- ============ SCREEN: SCAN (home) ============ -->
+    <section id="screen-scan" class="screen active">
+      <header class="app-header">
+        <h1>🛡️ LeakGuard</h1>
+        <p class="tagline">Stop the silent money leak</p>
+      </header>
+
+      <div class="card input-card">
+        <h2>Scan a statement</h2>
+        <p class="muted">Paper bill, bank SMS screenshot, or UPI receipt — nothing leaves your phone.</p>
+
+        <label class="btn btn-primary" for="input-camera">
+          📷 Scan with camera
+          <input type="file" id="input-camera" accept="image/*" capture="environment" hidden />
+        </label>
+
+        <label class="btn btn-secondary" for="input-gallery">
+          🖼️ Pick from gallery
+          <input type="file" id="input-gallery" accept="image/*" hidden />
+        </label>
+
+        <button class="btn btn-ghost" id="btn-demo-scan">⚡ Try demo scan</button>
+      </div>
+
+      <div class="card hidden" id="scan-progress">
+        <h2 id="progress-title">Processing…</h2>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <p class="muted" id="progress-detail">Starting on-device OCR…</p>
+      </div>
+
+      <div class="card hidden" id="raw-text-card">
+        <h2>Extracted text</h2>
+        <pre id="raw-text" class="raw-text"></pre>
+      </div>
+
+      <nav class="bottom-nav">
+        <button class="nav-btn active" data-target="screen-scan">📷 Scan</button>
+        <button class="nav-btn" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-target="screen-report">📄 Report</button>
+      </nav>
+    </section>
+
+    <!-- ============ SCREEN: DASHBOARD ============ -->
+    <section id="screen-dashboard" class="screen">
+      <header class="app-header">
+        <h1>Leak Dashboard</h1>
+        <p class="tagline">Everything you're silently paying for</p>
+      </header>
+
+      <div class="leak-hero">
+        <p class="leak-label">You're leaking</p>
+        <p class="leak-amount" id="leak-amount">₹0</p>
+        <p class="leak-sub">per month · <span id="leak-yearly">₹0</span>/year</p>
+        <p class="drip" id="drip-counter">💧 ₹0.0000 leaked while watching</p>
+      </div>
+
+      <div class="score-row">
+        <div class="score-card">
+          <p class="score-value" id="leak-score">—</p>
+          <p class="score-label">Leak Score</p>
+        </div>
+        <div class="score-card">
+          <p class="score-value" id="sub-count">0</p>
+          <p class="score-label">Subscriptions</p>
+        </div>
+      </div>
+
+      <div id="subscription-list" class="sub-list">
+        <p class="muted empty-msg">No scan yet — scan a statement to populate your dashboard.</p>
+      </div>
+
+      <nav class="bottom-nav">
+        <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
+        <button class="nav-btn active" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-target="screen-report">📄 Report</button>
+      </nav>
+    </section>
+
+    <!-- ============ SCREEN: REPORT ============ -->
+    <section id="screen-report" class="screen">
+      <header class="app-header">
+        <h1>Leak Report</h1>
+        <p class="tagline">Push to your laptop via Office Kit</p>
+      </header>
+
+      <div class="card">
+        <p class="muted">Generate a one-page action report, then push it to your connected PC through the Office Kit bridge.</p>
+        <button class="btn btn-primary" id="btn-generate-report">📄 Generate report</button>
+      </div>
+
+      <div class="card hidden" id="report-preview">
+        <h2>Report preview</h2>
+        <pre id="report-text" class="raw-text"></pre>
+        <button class="btn btn-secondary" id="btn-push-report">🌉 Push to laptop (Office Kit)</button>
+        <p class="muted hidden" id="push-status">✅ Report handed to Office Kit bridge.</p>
+      </div>
+
+      <nav class="bottom-nav">
+        <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
+        <button class="nav-btn" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn active" data-target="screen-report">📄 Report</button>
+      </nav>
+    </section>
+
+  </div>
+
+  <script src="js/parser.js"></script>
+  <script src="js/ocr.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
