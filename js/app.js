@@ -11,7 +11,6 @@ const state = {
   duplicates: [],
   sources: [],       // e.g. ["HDFC e-Statement", "Bank SMS"]
   scanStart: null,
-  pendingParsed: null, // scan waiting for merge/replace decision
 };
 
 /* ---------- screen navigation ---------- */
@@ -47,7 +46,7 @@ const DEMO_STATEMENT = [
   "15/09/26  Swiggy One membership Rs 99.00",
 ].join("\n");
 
-// Different person: smaller, different banks — for Replace demos
+// More evidence for the same ledger — auto-adds on scan
 const DEMO_SMS = [
   "SBI: Rs 199.00 debited 12/09/26 HOTSTAR AUTOPAY",
   "SBI: Rs 59.00 debited 14/09/26 YouTube Premium AUTOPAY",
@@ -81,24 +80,15 @@ async function handleImage(file) {
 }
 
 /* ---------- audit session logic ---------- */
+// One phone = one person: every scan auto-adds to the open ledger.
+// "Start new audit" is the explicit reset between people/sessions.
 function processScan(parsed, sourceName, rawText) {
   state.scanStart = Date.now();
   if (!parsed.subs.length) {
     alert("No subscription charges found in that scan.");
     return;
   }
-  const hasAudit = state.subs.length > 0;
-  if (hasAudit) {
-    // Ask: same person (merge) or different person (replace)?
-    state.pendingParsed = { parsed, sourceName };
-    document.getElementById("merge-modal-info").textContent =
-      `Current: ${state.subs.length} entries · ${fmt(state.monthlyTotal)}/month · sources: ${state.sources.join(", ")}`;
-    document.getElementById("merge-modal-new").textContent =
-      `New scan: ${parsed.subs.length} entries from ${sourceName}`;
-    document.getElementById("merge-modal").classList.remove("hidden");
-    return;
-  }
-  applyMerge(parsed, sourceName); // first scan just starts the ledger
+  applyMerge(parsed, sourceName);
 }
 
 function applyMerge(parsed, sourceName) {
@@ -116,12 +106,6 @@ function applyMerge(parsed, sourceName) {
     }
   }
   if (!state.sources.includes(sourceName)) state.sources.push(sourceName);
-  finishAuditUpdate();
-}
-
-function applyReplace(parsed, sourceName) {
-  state.subs = parsed.subs.map((s) => ({ ...s }));
-  state.sources = [sourceName];
   finishAuditUpdate();
 }
 
@@ -145,19 +129,7 @@ function computeDuplicates(subs) {
   return dups;
 }
 
-/* ---------- modal buttons ---------- */
-document.getElementById("btn-merge").addEventListener("click", () => {
-  const { parsed, sourceName } = state.pendingParsed;
-  document.getElementById("merge-modal").classList.add("hidden");
-  applyMerge(parsed, sourceName);
-  state.pendingParsed = null;
-});
-document.getElementById("btn-replace").addEventListener("click", () => {
-  const { parsed, sourceName } = state.pendingParsed;
-  document.getElementById("merge-modal").classList.add("hidden");
-  applyReplace(parsed, sourceName);
-  state.pendingParsed = null;
-});
+
 
 /* ---------- new audit (full reset) ---------- */
 document.getElementById("btn-new-audit").addEventListener("click", () => {

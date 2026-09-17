@@ -270,33 +270,5 @@ body {
 .sub-actions { display: flex; gap: 10px; margin-top: 12px; }
 .sub-actions .btn { margin-top: 0; padding: 9px; font-size: 0.75rem; }
 
-/* ---------- modal: the clerk asks ---------- */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(30,25,18,.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  padding: 24px;
-}
-.modal {
-  background: var(--paper);
-  border: 3px double var(--ink);
-  padding: 22px 18px;
-  max-width: 340px;
-  width: 100%;
-}
-.modal h3 {
-  font-family: var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  font-size: 0.95rem;
-  margin-bottom: 8px;
-}
-.modal .muted { margin-bottom: 6px; }
-.modal .btn { margin-top: 10px; }
-
 /* ---------- report ---------- */
 #push-status { color: var(--green); margin-top: 10px; font-family: var(--mono); }
