@@ -146,7 +146,15 @@ function renderDashboard() {
   document.getElementById("leak-amount").textContent = fmt(state.monthlyTotal);
   document.getElementById("leak-yearly").textContent = fmt(yearly);
   document.getElementById("sub-count").textContent = state.subs.length;
-  document.getElementById("leak-score").textContent = leakScore(state.subs, state.monthlyTotal);
+  // "—" until something is scanned: an empty ledger has no score yet
+  document.getElementById("leak-score").textContent = state.subs.length
+    ? leakScore(state.subs, state.monthlyTotal)
+    : "—";
+  // clear stale drip text when the ledger is empty
+  if (!state.subs.length) {
+    document.getElementById("drip-counter").textContent = "";
+    state.scanStart = null;
+  }
   document.getElementById("source-label").textContent = state.sources.length
     ? `Sources (${state.sources.length}): ${state.sources.join(" · ")}`
     : "No sources scanned yet";
@@ -194,13 +202,13 @@ function fmt(n) {
   return "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-/* ---------- drip counter ---------- */
+/* ---------- drip counter (₹ leaking while you watch) ---------- */
 setInterval(() => {
   if (!state.monthlyTotal || !state.scanStart) return;
   const seconds = (Date.now() - state.scanStart) / 1000;
-  const perSec = state.monthlyTotal / (30 * 24 * 3600);
-  const el = document.getElementById("drip-counter");
-  if (el) el.textContent = `💧 ₹${(perSec * seconds).toFixed(4)} leaked while watching`;
+  const perSec = state.monthlyTotal / (30 * 24 * 3600); // month → sec
+  document.getElementById("drip-counter").textContent =
+    `💧 ₹${(perSec * seconds).toFixed(4)} leaked while watching`;
 }, 250);
 
 /* ---------- leak report + Office Kit push ---------- */
