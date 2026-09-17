@@ -1,13 +1,17 @@
 /* ============================================================
    LeakGuard — app logic
-   Screens, OCR wiring, dashboard render, drip counter, report.
+   Audit sessions: first scan starts a ledger; later scans ask
+   MERGE (same person) or REPLACE (different person). Memory
+   only — refresh wipes everything (demo-safe).
    ============================================================ */
 
 const state = {
-  subs: [],
+  subs: [],          // merged subscription entries
   monthlyTotal: 0,
   duplicates: [],
+  sources: [],       // e.g. ["HDFC e-Statement", "Bank SMS"]
   scanStart: null,
+  pendingParsed: null, // scan waiting for merge/replace decision
 };
 
 /* ---------- screen navigation ---------- */
@@ -31,20 +35,31 @@ for (const inputId of ["input-camera", "input-gallery"]) {
   });
 }
 
-/* ---------- demo scan (no image needed — judges love this) ---------- */
-document.getElementById("btn-demo-scan").addEventListener("click", async () => {
-  const demoText = [
-    "HDFC BANK e-Statement  Sep 2026",
-    "05/09/26  Netflix subscription Rs 649.00 AUTOPAY",
-    "06/09/26  Spotify Premium Rs 119.00 AUTOPAY",
-    "07/09/26  Gaana Plus renewal Rs 99.00 AUTOPAY",
-    "08/09/26  Cult.fit Elite Rs 1250.00 e-mandate",
-    "10/09/26  Google One 200GB Rs 130.00 AUTOPAY",
-    "12/09/26  Amazon Prime renewal Rs 299.00",
-    "15/09/26  Swiggy One membership Rs 99.00",
-  ].join("\n");
-  await processText(demoText, "Demo statement");
-});
+/* ---------- demo scans ---------- */
+const DEMO_STATEMENT = [
+  "HDFC BANK e-Statement  Sep 2026",
+  "05/09/26  Netflix subscription Rs 649.00 AUTOPAY",
+  "06/09/26  Spotify Premium Rs 119.00 AUTOPAY",
+  "07/09/26  Gaana Plus renewal Rs 99.00 AUTOPAY",
+  "08/09/26  Cult.fit Elite Rs 1250.00 e-mandate",
+  "10/09/26  Google One 200GB Rs 130.00 AUTOPAY",
+  "12/09/26  Amazon Prime renewal Rs 299.00",
+  "15/09/26  Swiggy One membership Rs 99.00",
+].join("\n");
+
+// Different person: smaller, different banks — for Replace demos
+const DEMO_SMS = [
+  "SBI: Rs 199.00 debited 12/09/26 HOTSTAR AUTOPAY",
+  "SBI: Rs 59.00 debited 14/09/26 YouTube Premium AUTOPAY",
+  "SBI: Rs 899.00 debited 15/09/26 GOLD GYM E-MANDATE",
+].join("\n");
+
+document.getElementById("btn-demo-scan").addEventListener("click", () =>
+  processScan(parseStatement(DEMO_STATEMENT), "HDFC e-Statement", DEMO_STATEMENT)
+);
+document.getElementById("btn-demo-scan-2").addEventListener("click", () =>
+  processScan(parseStatement(DEMO_SMS), "SBI SMS (2nd person)", DEMO_SMS)
+);
 
 /* ---------- pipeline: image → OCR → parse ---------- */
 async function handleImage(file) {
@@ -52,30 +67,106 @@ async function handleImage(file) {
   const fill = document.getElementById("progress-fill");
   const detail = document.getElementById("progress-detail");
   progress.classList.remove("hidden");
-
   try {
     const text = await runOCR(file, (pct, msg) => {
       fill.style.width = pct + "%";
       detail.textContent = msg;
     });
-    await processText(text, file.name || "Scanned image");
+    document.getElementById("raw-text-card").classList.remove("hidden");
+    document.getElementById("raw-text").textContent = text.trim() || "(no text found)";
+    processScan(parseStatement(text), file.name || "Scanned image");
   } catch (err) {
     detail.textContent = "OCR failed: " + err.message;
   }
 }
 
-async function processText(text, sourceName) {
+/* ---------- audit session logic ---------- */
+function processScan(parsed, sourceName, rawText) {
   state.scanStart = Date.now();
-  document.getElementById("raw-text-card").classList.remove("hidden");
-  document.getElementById("raw-text").textContent = text.trim() || "(no text found)";
+  if (!parsed.subs.length) {
+    alert("No subscription charges found in that scan.");
+    return;
+  }
+  const hasAudit = state.subs.length > 0;
+  if (hasAudit) {
+    // Ask: same person (merge) or different person (replace)?
+    state.pendingParsed = { parsed, sourceName };
+    document.getElementById("merge-modal-info").textContent =
+      `Current: ${state.subs.length} entries · ${fmt(state.monthlyTotal)}/month · sources: ${state.sources.join(", ")}`;
+    document.getElementById("merge-modal-new").textContent =
+      `New scan: ${parsed.subs.length} entries from ${sourceName}`;
+    document.getElementById("merge-modal").classList.remove("hidden");
+    return;
+  }
+  applyMerge(parsed, sourceName); // first scan just starts the ledger
+}
 
-  const parsed = parseStatement(text);
-  state.subs = parsed.subs;
-  state.monthlyTotal = parsed.monthlyTotal;
-  state.duplicates = parsed.duplicates;
+function applyMerge(parsed, sourceName) {
+  for (const sub of parsed.subs) {
+    const existing = state.subs.find((s) => s.name.toLowerCase() === sub.name.toLowerCase());
+    if (existing) {
+      // duplicate protection: same service counts once, keep higher amount
+      if (sub.amount > existing.amount) {
+        existing.amount = sub.amount;
+        existing.autopay = sub.autopay || existing.autopay;
+        existing.lastCharged = sub.lastCharged;
+      }
+    } else {
+      state.subs.push({ ...sub });
+    }
+  }
+  if (!state.sources.includes(sourceName)) state.sources.push(sourceName);
+  finishAuditUpdate();
+}
+
+function applyReplace(parsed, sourceName) {
+  state.subs = parsed.subs.map((s) => ({ ...s }));
+  state.sources = [sourceName];
+  finishAuditUpdate();
+}
+
+function finishAuditUpdate() {
+  state.monthlyTotal = state.subs.reduce((sum, s) => sum + s.amount, 0);
+  state.duplicates = computeDuplicates(state.subs);
   renderDashboard();
   showScreen("screen-dashboard");
 }
+
+function computeDuplicates(subs) {
+  const byCat = {};
+  for (const s of subs) (byCat[s.category] = byCat[s.category] || []).push(s);
+  const dups = [];
+  for (const [cat, list] of Object.entries(byCat)) {
+    if (list.length > 1) {
+      dups.push(cat + ": " + list.map((s) => s.name).join(" + "));
+      list.forEach((s) => { s.flags = s.flags || []; if (!s.flags.includes("duplicate")) s.flags.push("duplicate"); });
+    }
+  }
+  return dups;
+}
+
+/* ---------- modal buttons ---------- */
+document.getElementById("btn-merge").addEventListener("click", () => {
+  const { parsed, sourceName } = state.pendingParsed;
+  document.getElementById("merge-modal").classList.add("hidden");
+  applyMerge(parsed, sourceName);
+  state.pendingParsed = null;
+});
+document.getElementById("btn-replace").addEventListener("click", () => {
+  const { parsed, sourceName } = state.pendingParsed;
+  document.getElementById("merge-modal").classList.add("hidden");
+  applyReplace(parsed, sourceName);
+  state.pendingParsed = null;
+});
+
+/* ---------- new audit (full reset) ---------- */
+document.getElementById("btn-new-audit").addEventListener("click", () => {
+  state.subs = [];
+  state.monthlyTotal = 0;
+  state.duplicates = [];
+  state.sources = [];
+  renderDashboard();
+});
 
 /* ---------- dashboard render ---------- */
 function renderDashboard() {
@@ -84,11 +175,14 @@ function renderDashboard() {
   document.getElementById("leak-yearly").textContent = fmt(yearly);
   document.getElementById("sub-count").textContent = state.subs.length;
   document.getElementById("leak-score").textContent = leakScore(state.subs, state.monthlyTotal);
+  document.getElementById("source-label").textContent = state.sources.length
+    ? `Sources (${state.sources.length}): ${state.sources.join(" · ")}`
+    : "No sources scanned yet";
 
   const list = document.getElementById("subscription-list");
   list.innerHTML = "";
   if (!state.subs.length) {
-    list.innerHTML = '<p class="muted empty-msg">No subscriptions detected.</p>';
+    list.innerHTML = '<p class="muted empty-msg">Ledger is empty — enter a bill to begin.</p>';
     return;
   }
   for (const sub of state.subs) list.appendChild(subCard(sub));
@@ -98,7 +192,7 @@ function subCard(sub) {
   const div = document.createElement("div");
   div.className = "sub-card";
   const flags = (sub.flags || [])
-    .map((f) => `<span class="badge ${f}">${f.toUpperCase()}</span>`)
+    .map((f) => `<span class="badge ${f}">${f}</span>`)
     .join("");
   div.innerHTML = `
     <div class="sub-top">
@@ -108,17 +202,18 @@ function subCard(sub) {
     <p class="sub-meta">${sub.category} · last charged ${sub.lastCharged} · saves ${fmt(sub.amount * 12)}/yr if cancelled${sub.autopay ? " · UPI AutoPay" : ""}</p>
     ${flags}
     <div class="sub-actions">
-      <button class="btn btn-cancel">Cancel</button>
-      <button class="btn btn-keep">Keep</button>
+      <button class="btn btn-danger act-cancel">Cancel</button>
+      <button class="btn btn-secondary act-keep">Keep</button>
     </div>`;
 
-  div.querySelector(".btn-cancel").addEventListener("click", () => {
-    state.monthlyTotal -= sub.amount;
+  div.querySelector(".act-cancel").addEventListener("click", () => {
     state.subs = state.subs.filter((s) => s !== sub);
-    renderDashboard();
+    finishAuditUpdate();
   });
-  div.querySelector(".btn-keep").addEventListener("click", () => {
-    div.querySelector(".btn-keep").textContent = "Kept ✓";
+  div.querySelector(".act-keep").addEventListener("click", (e) => {
+    div.classList.add("kept");
+    e.target.textContent = "Kept ✓";
+    e.target.disabled = true;
   });
   return div;
 }
@@ -127,11 +222,11 @@ function fmt(n) {
   return "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-/* ---------- drip counter (₹ leaking while you watch) ---------- */
+/* ---------- drip counter ---------- */
 setInterval(() => {
   if (!state.monthlyTotal || !state.scanStart) return;
   const seconds = (Date.now() - state.scanStart) / 1000;
-  const perSec = state.monthlyTotal / (30 * 24 * 3600); // month → sec
+  const perSec = state.monthlyTotal / (30 * 24 * 3600);
   const el = document.getElementById("drip-counter");
   if (el) el.textContent = `💧 ₹${(perSec * seconds).toFixed(4)} leaked while watching`;
 }, 250);
@@ -149,7 +244,7 @@ document.getElementById("btn-generate-report").addEventListener("click", () => {
 
 document.getElementById("btn-push-report").addEventListener("click", () => {
   // Office Kit bridge hook: replace with real SDK call when docs are available.
-  // Fallback: download as a file that can be shared to the PC.
+  // Fallback: download as a file shareable to the PC.
   const blob = new Blob([document.getElementById("report-text").textContent], {
     type: "text/plain",
   });

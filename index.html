@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1120" />
+  <meta name="theme-color" content="#f6f1e3" />
   <title>LeakGuard — Subscription Leak Detector</title>
   <link rel="stylesheet" href="css/styles.css" />
   <!-- Tesseract.js: on-device OCR, runs fully in the browser (offline after first load) -->
@@ -16,11 +16,11 @@
     <section id="screen-scan" class="screen active">
       <header class="app-header">
         <h1>🛡️ LeakGuard</h1>
-        <p class="tagline">Stop the silent money leak</p>
+        <p class="tagline">The khata of everything you forgot to cancel</p>
       </header>
 
       <div class="card input-card">
-        <h2>Scan a statement</h2>
+        <h2>Enter a bill</h2>
         <p class="muted">Paper bill, bank SMS screenshot, or UPI receipt — nothing leaves your phone.</p>
 
         <label class="btn btn-primary" for="input-camera">
@@ -33,7 +33,8 @@
           <input type="file" id="input-gallery" accept="image/*" hidden />
         </label>
 
-        <button class="btn btn-ghost" id="btn-demo-scan">⚡ Try demo scan</button>
+        <button class="btn btn-ghost" id="btn-demo-scan">⚡ Demo: e-statement</button>
+        <button class="btn btn-ghost" id="btn-demo-scan-2">⚡ Demo: bank SMS (2nd person)</button>
       </div>
 
       <div class="card hidden" id="scan-progress">
@@ -49,7 +50,7 @@
 
       <nav class="bottom-nav">
         <button class="nav-btn active" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-target="screen-dashboard">📊 Ledger</button>
         <button class="nav-btn" data-target="screen-report">📄 Report</button>
       </nav>
     </section>
@@ -57,8 +58,8 @@
     <!-- ============ SCREEN: DASHBOARD ============ -->
     <section id="screen-dashboard" class="screen">
       <header class="app-header">
-        <h1>Leak Dashboard</h1>
-        <p class="tagline">Everything you're silently paying for</p>
+        <h1>Leak Ledger</h1>
+        <p class="tagline">Everything silently charging you</p>
       </header>
 
       <div class="leak-hero">
@@ -68,6 +69,8 @@
         <p class="drip" id="drip-counter">💧 ₹0.0000 leaked while watching</p>
       </div>
 
+      <p class="source-label" id="source-label">No sources scanned yet</p>
+
       <div class="score-row">
         <div class="score-card">
           <p class="score-value" id="leak-score">—</p>
@@ -75,17 +78,19 @@
         </div>
         <div class="score-card">
           <p class="score-value" id="sub-count">0</p>
-          <p class="score-label">Subscriptions</p>
+          <p class="score-label">Entries</p>
         </div>
       </div>
 
+      <button class="btn btn-danger" id="btn-new-audit">🧹 Start new audit</button>
+
       <div id="subscription-list" class="sub-list">
-        <p class="muted empty-msg">No scan yet — scan a statement to populate your dashboard.</p>
+        <p class="muted empty-msg">No scan yet — enter a bill to open your ledger.</p>
       </div>
 
       <nav class="bottom-nav">
         <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn active" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn active" data-target="screen-dashboard">📊 Ledger</button>
         <button class="nav-btn" data-target="screen-report">📄 Report</button>
       </nav>
     </section>
@@ -94,7 +99,7 @@
     <section id="screen-report" class="screen">
       <header class="app-header">
         <h1>Leak Report</h1>
-        <p class="tagline">Push to your laptop via Office Kit</p>
+        <p class="tagline">Send to your laptop via Office Kit</p>
       </header>
 
       <div class="card">
@@ -111,11 +116,22 @@
 
       <nav class="bottom-nav">
         <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn" data-target="screen-dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-target="screen-dashboard">📊 Ledger</button>
         <button class="nav-btn active" data-target="screen-report">📄 Report</button>
       </nav>
     </section>
 
+  </div>
+
+  <!-- ============ REPLACE / MERGE MODAL ============ -->
+  <div class="modal-overlay hidden" id="merge-modal">
+    <div class="modal">
+      <h3>You already have a ledger open</h3>
+      <p class="muted" id="merge-modal-info">Current: 0 entries · ₹0/month</p>
+      <p class="muted" id="merge-modal-new">New scan: 0 entries</p>
+      <button class="btn btn-primary" id="btn-merge">➕ Same person — merge it in</button>
+      <button class="btn btn-secondary" id="btn-replace">🔄 Different person — replace</button>
+    </div>
   </div>
 
   <script src="js/parser.js"></script>
