@@ -16,14 +16,27 @@ const KNOWN_SERVICES = [
   { match: /gaana|wynk|jiosaavn/i, name: "Gaana/Wynk/Saavn", category: "Music", cancel: "In-app → Subscription" },
   { match: /youtube premium|yt premium/i, name: "YouTube Premium", category: "Streaming", cancel: "Google → Subscriptions" },
   { match: /cult\.?fit|gold.?s gym|anytime fitness/i, name: "Gym/Fitness", category: "Fitness", cancel: "Visit/TAPP to cancel" },
-  { match: /swiggy(?! one)|zomato(?! pro)/i, name: "Swiggy/Zomato", category: "Food", cancel: "In-app → One/Pro" },
+  { match: /swiggy|zomato/i, name: "Swiggy/Zomato", category: "Food", cancel: "In-app → One/Pro" },
   { match: /google one|icloud|dropbox/i, name: "Cloud Storage", category: "Storage", cancel: "Account → Storage plan" },
+  { match: /anthropic|claude/i, name: "Claude (Anthropic)", category: "AI Tools", cancel: "claude.ai → Settings → Billing" },
+  { match: /chatgpt|openai/i, name: "ChatGPT", category: "AI Tools", cancel: "chat.openai.com → Billing" },
+  { match: /perplexity/i, name: "Perplexity", category: "AI Tools", cancel: "Account → Subscription" },
+  { match: /adobe (creative|photoshop|acrobat)/i, name: "Adobe", category: "Software", cancel: "account.adobe.com → Plans" },
+  { match: /canva/i, name: "Canva", category: "Software", cancel: "canva.com → Billing & Plans" },
+  { match: /notion/i, name: "Notion", category: "Software", cancel: "Settings → Billing" },
 ];
 
 // Subscriptions often appear as these recurring patterns in SMS/OCR text
 const CHARGE_RE =
   /(?:Rs\.?|INR|₹)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/gi;
-const AUTOPAY_RE = /(autopay|e-?mandate|e-?nach|recurring)/i;
+const AUTOPAY_RE = /(autopay|e-?mandate|e-?nach|recurring|will be charged)/i;
+// A decimal amount, even with no currency prefix (e.g. "31,499.00" or "649.00").
+// Decimals are required so dates like 15/09/26 and years like 2026 never match.
+const BARE_AMOUNT_RE = /(\d{1,3}(?:,\d{2,3})*\.\d{2})(?!\d)/;
+// Lines that describe a payment make a bare number trustworthy as an amount.
+const PAYMENT_CONTEXT_RE = /(paid|payment|charged|debited|renewal|subscription|amount)/i;
+// "Plan Anthropic Premium" style lines name the service without an amount.
+const PLAN_NAME_RE = /^\s*plan\s+([A-Za-z][A-Za-z0-9 .&'-]{1,40})$/i;
 
 /**
  * Parse raw OCR text into subscription objects.
@@ -33,15 +46,33 @@ const AUTOPAY_RE = /(autopay|e-?mandate|e-?nach|recurring)/i;
 function parseStatement(text) {
   const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
   const found = new Map(); // name -> sub
+  let lastKnown = null;    // service name remembered from a nearby line (plan pages)
 
   for (const line of lines) {
-    // must contain a ₹ amount to be interesting
+    // remember service names from name-bearing lines (e.g. "Plan Anthropic Premium")
+    const svcAnywhere = KNOWN_SERVICES.find(s => s.match.test(line));
+    const planName = line.match(PLAN_NAME_RE);
+    if (svcAnywhere) lastKnown = svcAnywhere;
+    else if (planName && !amtOnLine(line)) {
+      lastKnown = {
+        name: planName[1].trim(),
+        category: "Other",
+        cancel: "Check the service's subscription page",
+      };
+    }
+
+    // amount: currency-prefixed (₹/Rs/INR) or, failing that, a bare decimal
+    // on a payment-context line
+    let amount = null;
     const amtMatch = [...line.matchAll(CHARGE_RE)];
-    if (!amtMatch.length) continue;
-    const amount = parseFloat(amtMatch[0][1].replace(/,/g, ""));
+    if (amtMatch.length) amount = parseFloat(amtMatch[0][1].replace(/,/g, ""));
+    else if (PAYMENT_CONTEXT_RE.test(line)) {
+      const bare = line.match(BARE_AMOUNT_RE);
+      if (bare) amount = parseFloat(bare[1].replace(/,/g, ""));
+    }
     if (!amount || amount < 10) continue;
 
-    const svc = KNOWN_SERVICES.find(s => s.match.test(line));
+    const svc = svcAnywhere || lastKnown;
     const name = svc ? svc.name : guessName(line);
     if (!name) continue;
 
@@ -76,11 +107,17 @@ function parseStatement(text) {
   return { subs, monthlyTotal, duplicates };
 }
 
+/** Does the line carry any currency-prefixed amount? */
+function amtOnLine(line) {
+  return [...line.matchAll(CHARGE_RE)].length > 0;
+}
+
 /** Fallback name guess: longest capitalized token cluster in the line */
 function guessName(line) {
   const words = line.match(/[A-Za-z][A-Za-z&. ]{2,}/g);
   if (!words) return null;
-  const best = words.sort((a, b) => b.length - a.length)[0].trim();
+  let best = words.sort((a, b) => b.length - a.length)[0].trim();
+  best = best.replace(/^(plan|last|payment|paid)\s+/i, "").trim();
   return best.length > 2 ? best : null;
 }
 
