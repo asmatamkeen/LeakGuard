@@ -37,6 +37,9 @@ const BARE_AMOUNT_RE = /(\d{1,3}(?:,\d{2,3})*\.\d{2})(?!\d)/;
 const PAYMENT_CONTEXT_RE = /(paid|payment|charged|debited|renewal|subscription|amount)/i;
 // "Plan Anthropic Premium" style lines name the service without an amount.
 const PLAN_NAME_RE = /^\s*plan\s+([A-Za-z][A-Za-z0-9 .&'-]{1,40})$/i;
+// Billing-frequency keywords → months covered by one payment (used in matching above via inline regexes).
+const TERM_RANGE_RE = /([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})\s*[-–—]\s*([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})/;
+const MONTHS = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
 
 /**
  * Parse raw OCR text into subscription objects.
@@ -47,6 +50,7 @@ function parseStatement(text) {
   const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
   const found = new Map(); // name -> sub
   let lastKnown = null;    // service name remembered from a nearby line (plan pages)
+  let lastTermMonths = null; // months-per-payment remembered from a term line
 
   for (const line of lines) {
     // remember service names from name-bearing lines (e.g. "Plan Anthropic Premium")
@@ -59,6 +63,18 @@ function parseStatement(text) {
         category: "Other",
         cancel: "Check the service's subscription page",
       };
+    }
+
+    // remember billing period from a term line like "Oct 1, 2026 - Sep 30, 2027"
+    const term = line.match(TERM_RANGE_RE);
+    if (term) {
+      const m1 = MONTHS[term[1].slice(0, 3).toLowerCase()];
+      const m2 = MONTHS[term[3].slice(0, 3).toLowerCase()];
+      if (m1 !== undefined && m2 !== undefined) {
+        // inclusive month span: Oct 2026 - Sep 2027 = 12 months
+        const span = (parseInt(term[4], 10) - parseInt(term[2], 10)) * 12 + (m2 - m1) + 1;
+        if (span >= 1 && span <= 36) lastTermMonths = span;
+      }
     }
 
     // amount: currency-prefixed (₹/Rs/INR) or, failing that, a bare decimal
@@ -76,11 +92,20 @@ function parseStatement(text) {
     const name = svc ? svc.name : guessName(line);
     if (!name) continue;
 
+    // months covered by one payment: explicit keyword > term span > monthly
+    let monthsPerPayment = 1;
+    if (/\b(annual|yearly|per year|\/ ?year|12[- ]month)\b/i.test(line)) monthsPerPayment = 12;
+    else if (/\b(quarterly|per quarter)\b/i.test(line)) monthsPerPayment = 3;
+    else if (/\b(weekly|per week)\b/i.test(line)) monthsPerPayment = 52 / 12;
+    else if (lastTermMonths) monthsPerPayment = lastTermMonths;
+
     const autopay = AUTOPAY_RE.test(line);
     const dateMatch = line.match(/(\d{1,2}[-\/][A-Za-z]{3}[-\/]\d{2,4})|(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/);
     const sub = {
       name,
-      amount,
+      amount,                              // as billed (one payment)
+      monthsPerPayment,                    // payment covers this many months
+      monthly: Math.round((amount / monthsPerPayment) * 100) / 100, // normalized per-month
       category: svc ? svc.category : "Other",
       cancel: svc ? svc.cancel : "Check app/bank mandate",
       autopay,
@@ -103,7 +128,7 @@ function parseStatement(text) {
     }
   }
 
-  const monthlyTotal = subs.reduce((sum, s) => sum + s.amount, 0);
+  const monthlyTotal = subs.reduce((sum, s) => sum + s.monthly, 0);
   return { subs, monthlyTotal, duplicates };
 }
 
@@ -139,7 +164,9 @@ function buildReport(parsed) {
   out += `Leak Score   : ${leakScore(parsed.subs, parsed.monthlyTotal)}/100\n\n`;
   out += "SUBSCRIPTIONS FOUND\n";
   parsed.subs.forEach(s => {
-    out += `- ${s.name} : Rs ${s.amount}/mo (${s.category}${s.autopay ? ", UPI AutoPay" : ""}) -> ${s.cancel}\n`;
+    const mpp = s.monthsPerPayment || 1;
+    const billed = mpp === 12 ? `Rs ${s.amount}/yr` : mpp === 3 ? `Rs ${s.amount}/quarter` : `Rs ${s.amount}/mo`;
+    out += `- ${s.name} : ${billed} (= Rs ${s.monthly}/mo) (${s.category}${s.autopay ? ", UPI AutoPay" : ""}) -> ${s.cancel}\n`;
   });
   if (parsed.duplicates.length) {
     out += "\nFLAGGED\n";

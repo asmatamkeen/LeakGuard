@@ -1,8 +1,8 @@
 /* ============================================================
    LeakGuard — app logic
-   Audit sessions: first scan starts a ledger; later scans ask
-   MERGE (same person) or REPLACE (different person). Memory
-   only — refresh wipes everything (demo-safe).
+   One phone = one person: scans auto-add to the open ledger.
+   "Start new audit" resets. Ledger persists across refresh
+   via localStorage (demo protocol: tap New Audit first).
    ============================================================ */
 
 const state = {
@@ -95,11 +95,9 @@ function applyMerge(parsed, sourceName) {
   for (const sub of parsed.subs) {
     const existing = state.subs.find((s) => s.name.toLowerCase() === sub.name.toLowerCase());
     if (existing) {
-      // duplicate protection: same service counts once, keep higher amount
-      if (sub.amount > existing.amount) {
-        existing.amount = sub.amount;
-        existing.autopay = sub.autopay || existing.autopay;
-        existing.lastCharged = sub.lastCharged;
+      // duplicate protection: same service counts once, keep the higher per-month rate
+      if ((sub.monthly || sub.amount) > (existing.monthly || existing.amount)) {
+        Object.assign(existing, { ...sub, flags: existing.flags });
       }
     } else {
       state.subs.push({ ...sub });
@@ -110,11 +108,36 @@ function applyMerge(parsed, sourceName) {
 }
 
 function finishAuditUpdate() {
-  state.monthlyTotal = state.subs.reduce((sum, s) => sum + s.amount, 0);
+  state.monthlyTotal = state.subs.reduce((sum, s) => sum + (s.monthly || s.amount), 0);
   state.duplicates = computeDuplicates(state.subs);
+  saveState();
   renderDashboard();
   showScreen("screen-dashboard");
 }
+
+/* ---------- persistence: ledger survives refresh ---------- */
+function saveState() {
+  try {
+    localStorage.setItem(
+      "leakguard-audit",
+      JSON.stringify({ subs: state.subs, sources: state.sources, monthlyTotal: state.monthlyTotal })
+    );
+  } catch (e) { /* storage full/blocked — memory-only fallback */ }
+}
+function loadState() {
+  try {
+    const raw = localStorage.getItem("leakguard-audit");
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (Array.isArray(saved.subs) && saved.subs.length) {
+      state.subs = saved.subs;
+      state.sources = saved.sources || [];
+      state.monthlyTotal = saved.monthlyTotal || 0;
+    }
+  } catch (e) { /* corrupted save — start clean */ }
+}
+loadState();
+renderDashboard(); // restore saved ledger on refresh (drip stays off until next scan)
 
 function computeDuplicates(subs) {
   const byCat = {};
@@ -131,12 +154,13 @@ function computeDuplicates(subs) {
 
 
 
-/* ---------- new audit (full reset) ---------- */
+/* ---------- new audit (full reset, including saved ledger) ---------- */
 document.getElementById("btn-new-audit").addEventListener("click", () => {
   state.subs = [];
   state.monthlyTotal = 0;
   state.duplicates = [];
   state.sources = [];
+  try { localStorage.removeItem("leakguard-audit"); } catch (e) {}
   renderDashboard();
 });
 
@@ -177,19 +201,45 @@ function subCard(sub) {
   div.innerHTML = `
     <div class="sub-top">
       <span class="sub-name">${sub.name}</span>
-      <span class="sub-amount">${fmt(sub.amount)}/mo</span>
+      <span class="sub-amount act-edit" title="Tap to correct if OCR misread">${fmt(sub.monthly)}/mo ✎</span>
     </div>
-    <p class="sub-meta">${sub.category} · last charged ${sub.lastCharged} · saves ${fmt(sub.amount * 12)}/yr if cancelled${sub.autopay ? " · UPI AutoPay" : ""}</p>
+    <p class="sub-meta">${sub.category} · ${billLabel(sub)} · last charged ${sub.lastCharged} · saves ${fmt(sub.monthly * 12)}/yr if cancelled${sub.autopay ? " · UPI AutoPay" : ""}</p>
     ${flags}
     <div class="sub-actions">
       <button class="btn btn-danger act-cancel">Cancel</button>
       <button class="btn btn-secondary act-keep">Keep</button>
     </div>`;
 
+  function billLabel(sub) {
+    if (sub.monthsPerPayment === 12) return `billed ${fmt(sub.amount)}/year`;
+    if (sub.monthsPerPayment === 3) return `billed ${fmt(sub.amount)}/quarter`;
+    if (sub.monthsPerPayment && sub.monthsPerPayment > 1 && sub.monthsPerPayment < 12)
+      return `billed ${fmt(sub.amount)} every ${Math.round(sub.monthsPerPayment)} months`;
+    return "billed monthly";
+  }
+
+  // tap-to-edit: fix OCR misreads manually
+  div.querySelector(".act-edit").addEventListener("click", () => {
+    const raw = prompt(
+      `Correct amount billed per period (currently ${sub.amount}):`,
+      String(sub.amount)
+    );
+    if (raw === null) return; // cancelled
+    const val = parseFloat(raw.replace(/[^0-9.]/g, ""));
+    if (!val || val <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+    sub.amount = val;
+    sub.monthly = Math.round((val / (sub.monthsPerPayment || 1)) * 100) / 100;
+    finishAuditUpdate();
+  });
+
   div.querySelector(".act-cancel").addEventListener("click", () => {
     state.subs = state.subs.filter((s) => s !== sub);
     finishAuditUpdate();
   });
+
   div.querySelector(".act-keep").addEventListener("click", (e) => {
     div.classList.add("kept");
     e.target.textContent = "Kept ✓";

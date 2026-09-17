@@ -247,6 +247,7 @@ body {
 .sub-top { display: flex; justify-content: space-between; align-items: baseline; }
 .sub-name { font-weight: 700; }
 .sub-amount { font-family: var(--mono); color: var(--red); font-weight: 700; }
+.act-edit { cursor: pointer; border-bottom: 1px dashed var(--red); }
 .sub-meta { color: var(--ink-soft); font-size: 0.78rem; margin-top: 4px; font-style: italic; }
 
 .badge {
