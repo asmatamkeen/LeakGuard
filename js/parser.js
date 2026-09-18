@@ -37,6 +37,12 @@ const BARE_AMOUNT_RE = /(\d{1,3}(?:,\d{2,3})*\.\d{2})(?!\d)/;
 const PAYMENT_CONTEXT_RE = /(paid|payment|charged|debited|renewal|subscription|amount)/i;
 // "Plan Anthropic Premium" style lines name the service without an amount.
 const PLAN_NAME_RE = /^\s*plan\s+([A-Za-z][A-Za-z0-9 .&'-]{1,40})$/i;
+// Bill-summary lines (totals, taxes, fees) are NOT subscription charges.
+const TOTAL_RE = /\b(grand\s*total|sub\s*-?\s*total|total|amount\s*due|balance)\b/i;
+// One-time food-delivery order context (restaurant bill, not a membership).
+const FOOD_ORDER_RE = /\b(order|item|qty|invoice|bill|restaurant|delivered|cart|kitchen|cuisine)\b/i;
+// Swiggy/Zomato only count when it's their paid membership or a mandate.
+const FOOD_MEMBERSHIP_RE = /\b(one|pro|plus|gold|membership|autopay|e-?mandate|subscription|renewal)\b/i;
 // Billing-frequency keywords → months covered by one payment (used in matching above via inline regexes).
 const TERM_RANGE_RE = /([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})\s*[-–—]\s*([A-Za-z]{3,9})\s+\d{1,2},?\s+(\d{4})/;
 const MONTHS = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
@@ -53,8 +59,23 @@ function parseStatement(text) {
   let lastTermMonths = null; // months-per-payment remembered from a term line
 
   for (const line of lines) {
+    // bill-summary lines (totals/taxes/balance) never name a subscription —
+    // skip before they can poison lastKnown or be read as charges
+    if (TOTAL_RE.test(line)) continue;
+
     // remember service names from name-bearing lines (e.g. "Plan Anthropic Premium")
     const svcAnywhere = KNOWN_SERVICES.find(s => s.match.test(line));
+
+    // Swiggy/Zomato appear on every food-order bill header; only a paid
+    // membership/mandate line counts, and order lines never seed lastKnown
+    if (svcAnywhere && svcAnywhere.name === "Swiggy/Zomato" && !FOOD_MEMBERSHIP_RE.test(line)) {
+      continue;
+    }
+
+    // one-time food-order lines (items, fees, taxes) are not subscriptions
+    if (FOOD_ORDER_RE.test(line) && !amtOnLine(line)) { /* fallthrough */ }
+    else if (FOOD_ORDER_RE.test(line) && !svcAnywhere) continue;
+
     const planName = line.match(PLAN_NAME_RE);
     if (svcAnywhere) lastKnown = svcAnywhere;
     else if (planName && !amtOnLine(line)) {
@@ -89,8 +110,11 @@ function parseStatement(text) {
     if (!amount || amount < 10) continue;
 
     const svc = svcAnywhere || lastKnown;
-    const name = svc ? svc.name : guessName(line);
+    let name = svc ? svc.name : guessName(line);
     if (!name) continue;
+    // guessed names that swallowed the currency token ("Chicken Biryani Rs")
+    // are OCR noise from item lines, not services
+    if (!svc && /(rs\.?|inr|₹)$/i.test(name)) continue;
 
     // months covered by one payment: explicit keyword > term span > monthly
     let monthsPerPayment = 1;

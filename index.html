@@ -3,124 +3,149 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#f6f1e3" />
+  <meta name="theme-color" content="#05070d" />
   <title>LeakGuard — Subscription Leak Detector</title>
   <link rel="stylesheet" href="css/styles.css" />
-  <!-- Tesseract.js: on-device OCR, runs fully in the browser (offline after first load) -->
+  <!-- Tesseract.js: on-device OCR (browser-side; offline after first load) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
-  <div class="phone-frame">
 
-    <!-- ============ SCREEN: SCAN (home) ============ -->
-    <section id="screen-scan" class="screen active">
-      <header class="app-header">
-        <h1>🛡️ LeakGuard</h1>
-        <p class="tagline">The khata of everything you forgot to cancel</p>
+  <!-- Living background: rain intensity = leak severity -->
+  <canvas id="rain" aria-hidden="true"></canvas>
+
+  <main class="stage">
+
+    <!-- ============ BASE VIEW: THE LEDGER (always present) ============ -->
+    <section id="view-ledger" class="view view--base">
+      <header class="masthead">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>LeakGuard</h1>
+          <p class="brand-sub" id="source-label">No sources scanned yet</p>
+        </div>
+        <button class="orb-btn" id="btn-export" title="Export ledger (JSON)">⇩</button>
+        <button class="orb-btn" id="btn-import" title="Import ledger">⇧</button>
+        <input type="file" id="input-import" accept="application/json,.json" hidden />
+        <button class="orb-btn" id="btn-reset" title="Start new audit">⟲</button>
       </header>
 
-      <div class="card input-card">
-        <h2>Enter a bill</h2>
-        <p class="muted">Paper bill, bank SMS screenshot, or UPI receipt — nothing leaves your phone.</p>
-
-        <label class="btn btn-primary" for="input-camera">
-          📷 Scan with camera
-          <input type="file" id="input-camera" accept="image/*" capture="environment" hidden />
-        </label>
-
-        <label class="btn btn-secondary" for="input-gallery">
-          🖼️ Pick from gallery
-          <input type="file" id="input-gallery" accept="image/*" hidden />
-        </label>
-
-        <button class="btn btn-ghost" id="btn-demo-scan">⚡ Demo: e-statement</button>
-        <button class="btn btn-ghost" id="btn-demo-scan-2">⚡ Demo: bank SMS (add more)</button>
+      <!-- The wound: your monthly leak -->
+      <div class="wound" id="wound">
+        <p class="wound-label">leaking from your accounts</p>
+        <p class="wound-amount"><span id="leak-amount">₹0</span><span class="per">/mo</span></p>
+        <p class="wound-yearly" id="leak-yearly">₹0 a year, quietly</p>
+        <p class="wound-drip" id="drip-counter">&nbsp;</p>
       </div>
 
-      <div class="card hidden" id="scan-progress">
-        <h2 id="progress-title">Processing…</h2>
-        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
-        <p class="muted" id="progress-detail">Starting on-device OCR…</p>
+      <!-- Vitals -->
+      <div class="vitals">
+        <div class="vital" id="vital-score">
+          <span class="vital-num" id="leak-score">—</span>
+          <span class="vital-cap">leak score</span>
+        </div>
+        <div class="vital">
+          <span class="vital-num" id="sub-count">0</span>
+          <span class="vital-cap">entries</span>
+        </div>
       </div>
 
-      <div class="card hidden" id="raw-text-card">
-        <h2>Extracted text</h2>
+      <!-- Category split -->
+      <div class="card glass hidden" id="chart-card">
+        <h2 class="card-title">Where it leaks</h2>
+        <canvas id="pie-chart" width="300" height="300" aria-label="Leak by category"></canvas>
+        <div id="pie-legend" class="pie-legend"></div>
+      </div>
+
+      <!-- Renewal timeline -->
+      <div class="card hidden" id="timeline-card">
+        <h2 class="card-title">Renewing soon</h2>
+        <div id="timeline"></div>
+      </div>
+
+      <!-- Cut-savings tracker -->
+      <div class="card savings hidden" id="savings-card">
+        <h2 class="card-title">Reclaimed</h2>
+        <p class="savings-num" id="savings-num">₹0</p>
+        <p class="savings-sub" id="savings-yr"></p>
+      </div>
+
+      <!-- The entries -->
+      <div id="subscription-list" class="stream"></div>
+      <p class="empty-note" id="empty-note">
+        Nothing found yet.<br />
+        <span>Feed me a bill, a bank SMS, a screenshot — anything with a charge on it.</span>
+      </p>
+    </section>
+
+  </main>
+
+  <!-- ============ SHEET: SCAN ============ -->
+    <section id="view-scan" class="view sheet" aria-hidden="true">
+      <div class="sheet-grip"></div>
+      <h2 class="sheet-title">Feed the guard</h2>
+
+      <label class="feed feed--cam" for="input-camera">
+        <span class="feed-ico">◉</span>
+        <span class="feed-name">Camera</span>
+        <span class="feed-hint">paper bills · statements</span>
+        <input type="file" id="input-camera" accept="image/*" capture="environment" hidden />
+      </label>
+
+      <label class="feed feed--gal" for="input-gallery">
+        <span class="feed-ico">▦</span>
+        <span class="feed-name">Gallery</span>
+        <span class="feed-hint">SMS · UPI screenshots</span>
+        <input type="file" id="input-gallery" accept="image/*" hidden />
+      </label>
+
+      <button class="feed feed--demo" id="btn-demo-scan">
+        <span class="feed-ico">⚡</span>
+        <span class="feed-name">Demo e-statement</span>
+        <span class="feed-hint">instant, no image</span>
+      </button>
+      <button class="feed feed--demo" id="btn-demo-scan-2">
+        <span class="feed-ico">⚡</span>
+        <span class="feed-name">Demo bank SMS</span>
+        <span class="feed-hint">adds more entries</span>
+      </button>
+
+      <div class="scan-live hidden" id="scan-progress">
+        <p id="progress-detail" class="scan-detail">Starting on-device OCR…</p>
+        <div class="scan-track"><div class="scan-fill" id="progress-fill"></div></div>
+      </div>
+
+      <div class="hidden" id="raw-text-card">
+        <h3 class="scan-detail">Extracted text</h3>
         <pre id="raw-text" class="raw-text"></pre>
       </div>
-
-      <nav class="bottom-nav">
-        <button class="nav-btn active" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn" data-target="screen-dashboard">📊 Ledger</button>
-        <button class="nav-btn" data-target="screen-report">📄 Report</button>
-      </nav>
     </section>
 
-    <!-- ============ SCREEN: DASHBOARD ============ -->
-    <section id="screen-dashboard" class="screen">
-      <header class="app-header">
-        <h1>Leak Ledger</h1>
-        <p class="tagline">Everything silently charging you</p>
-      </header>
+  <!-- ============ SHEET: REPORT ============ -->
+    <section id="view-report" class="view sheet" aria-hidden="true">
+      <div class="sheet-grip"></div>
+      <h2 class="sheet-title">The report</h2>
+      <p class="sheet-sub">One page. Phone → laptop via Office Kit. Nothing touches a server.</p>
 
-      <div class="leak-hero">
-        <p class="leak-label">You're leaking</p>
-        <p class="leak-amount" id="leak-amount">₹0</p>
-        <p class="leak-sub">per month · <span id="leak-yearly">₹0</span>/year</p>
-        <p class="drip" id="drip-counter">💧 ₹0.0000 leaked while watching</p>
-      </div>
+      <button class="cta" id="btn-generate-report">Generate leak report</button>
 
-      <p class="source-label" id="source-label">No sources scanned yet</p>
-
-      <div class="score-row">
-        <div class="score-card">
-          <p class="score-value" id="leak-score">—</p>
-          <p class="score-label">Leak Score</p>
-        </div>
-        <div class="score-card">
-          <p class="score-value" id="sub-count">0</p>
-          <p class="score-label">Entries</p>
-        </div>
-      </div>
-
-      <button class="btn btn-danger" id="btn-new-audit">🧹 Start new audit</button>
-
-      <div id="subscription-list" class="sub-list">
-        <p class="muted empty-msg">No scan yet — enter a bill to open your ledger.</p>
-      </div>
-
-      <nav class="bottom-nav">
-        <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn active" data-target="screen-dashboard">📊 Ledger</button>
-        <button class="nav-btn" data-target="screen-report">📄 Report</button>
-      </nav>
-    </section>
-
-    <!-- ============ SCREEN: REPORT ============ -->
-    <section id="screen-report" class="screen">
-      <header class="app-header">
-        <h1>Leak Report</h1>
-        <p class="tagline">Send to your laptop via Office Kit</p>
-      </header>
-
-      <div class="card">
-        <p class="muted">Generate a one-page action report, then push it to your connected PC through the Office Kit bridge.</p>
-        <button class="btn btn-primary" id="btn-generate-report">📄 Generate report</button>
-      </div>
-
-      <div class="card hidden" id="report-preview">
-        <h2>Report preview</h2>
+      <div class="hidden" id="report-preview">
         <pre id="report-text" class="raw-text"></pre>
-        <button class="btn btn-secondary" id="btn-push-report">🌉 Push to laptop (Office Kit)</button>
-        <p class="muted hidden" id="push-status">✅ Report handed to Office Kit bridge.</p>
+        <button class="cta cta--ghost" id="btn-push-report">Push to laptop (Office Kit)</button>
+        <p class="push-ok hidden" id="push-status">✓ handed to the bridge</p>
       </div>
-
-      <nav class="bottom-nav">
-        <button class="nav-btn" data-target="screen-scan">📷 Scan</button>
-        <button class="nav-btn" data-target="screen-dashboard">📊 Ledger</button>
-        <button class="nav-btn active" data-target="screen-report">📄 Report</button>
-      </nav>
     </section>
 
+  <!-- Floating action cluster -->
+  <div class="fabs">
+    <button class="fab fab--scan" id="tab-scan" title="Scan">＋</button>
+    <button class="fab fab--report" id="tab-report" title="Report">≡</button>
+  </div>
+
+  <!-- Undo snackbar -->
+  <div class="undo-bar" id="undo-bar">
+    <span id="undo-text"></span>
+    <button id="undo-btn">Undo</button>
   </div>
 
   <script src="js/parser.js"></script>
