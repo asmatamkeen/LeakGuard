@@ -2,8 +2,8 @@
    LeakGuard — app logic
    One phone = one person: scans auto-add to the open ledger.
    "⟲" resets. Ledger persists across refresh via localStorage.
-   UI: living rain background driven by leak severity, bottom
-   sheets for scan/report, pointer-tracked glow, ticked numbers.
+   UI: bottom sheets for scan/report, pointer-tracked glow, ticked
+   numbers. Hover = focus: the hovered card grows, siblings dim back.
    ============================================================ */
 
 const state = {
@@ -12,76 +12,13 @@ const state = {
   duplicates: [],
   sources: [],
   scanStart: null,
-  cut: [], // subscriptions you've cut — feeds the savings tracker
+  cut: [],          // subscriptions you've cut — feeds the savings tracker
+  history: {},      // name -> [{t, monthly}] scan snapshots for trends
 };
 
 // Palette declared before any render path uses it (TDZ-safe)
 const PIE_COLORS = ["#8b5cf6", "#b9a8ff", "#5b7bd8", "#2fb8a6", "#d99a2b", "#e0526e", "#6d3fd4"];
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-/* ============================================================
-   RAIN ENGINE — droplet count & speed scale with leak severity
-   ============================================================ */
-const rain = (() => {
-  const canvas = document.getElementById("rain");
-  const ctx = canvas.getContext("2d");
-  let drops = [];
-  let target = 0; // desired drop count (0..140)
-  let w = 0, h = 0;
-
-  function resize() {
-    w = canvas.width = window.innerWidth;
-    h = canvas.height = window.innerHeight;
-  }
-  window.addEventListener("resize", resize);
-  resize();
-
-  function spawn() {
-    return {
-      x: Math.random() * w,
-      y: Math.random() * -h,
-      len: 8 + Math.random() * 16,
-      speed: 240 + Math.random() * 260,
-      drift: 12 + Math.random() * 20,
-      alpha: 0.12 + Math.random() * 0.25,
-    };
-  }
-
-  function setIntensity(monthly) {
-    // ₹0 → 0 drops; ₹3000+/mo → 140 drops
-    target = Math.min(140, Math.round((monthly / 3000) * 140));
-  }
-
-  let last = performance.now();
-  function frame(now) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-
-    // ease actual count toward target
-    if (drops.length < target) for (let i = 0; i < 3; i++) drops.push(spawn());
-    if (drops.length > target) drops.splice(0, Math.ceil((drops.length - target) * 0.04));
-
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "rgba(139, 92, 246, 1)";
-    ctx.lineWidth = 1;
-    for (const d of drops) {
-      d.y += d.speed * dt;
-      d.x += d.drift * dt;
-      if (d.y > h + 20) Object.assign(d, spawn(), { y: -20 });
-      ctx.globalAlpha = d.alpha;
-      ctx.beginPath();
-      ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x - d.drift * 0.05, d.y - d.len);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    requestAnimationFrame(frame);
-  }
-  if (!REDUCED) requestAnimationFrame(frame);
-  else ctx.clearRect(0, 0, w, h);
-
-  return { setIntensity };
-})();
 
 /* ============================================================
    SHEET NAVIGATION (scan / report slide up; ledger stays)
@@ -232,6 +169,10 @@ function applyMerge(parsed, sourceName) {
     } else {
       state.subs.push({ ...sub });
     }
+    // record a history snapshot for trend arrows
+    const key = sub.name.toLowerCase();
+    state.history[key] = state.history[key] || [];
+    state.history[key].push({ t: Date.now(), monthly: sub.monthly || sub.amount });
   }
   if (!state.sources.includes(sourceName)) state.sources.push(sourceName);
   finishAuditUpdate();
@@ -278,7 +219,7 @@ function saveState() {
   try {
     localStorage.setItem(
       "leakguard-audit",
-      JSON.stringify({ subs: state.subs, sources: state.sources, monthlyTotal: state.monthlyTotal, cut: state.cut })
+      JSON.stringify({ subs: state.subs, sources: state.sources, monthlyTotal: state.monthlyTotal, cut: state.cut, history: state.history })
     );
   } catch (e) { /* storage blocked — memory-only */ }
 }
@@ -292,6 +233,7 @@ function loadState() {
       state.sources = saved.sources || [];
       state.monthlyTotal = saved.monthlyTotal || 0;
       state.cut = Array.isArray(saved.cut) ? saved.cut : [];
+      state.history = saved.history && typeof saved.history === "object" ? saved.history : {};
     }
   } catch (e) { /* corrupted save — clean start */ }
 }
@@ -324,8 +266,24 @@ document.getElementById("input-import").addEventListener("change", async (e) => 
   }
 });
 
+document.getElementById("btn-csv").addEventListener("click", () => {
+  const head = "name,amount,monthly,monthsPerPayment,category,autopay,lastCharged,trialDays,unused,sharedPeople\n";
+  const rows = state.subs
+    .map((s) =>
+      [s.name, s.amount, s.monthly, s.monthsPerPayment || 1, s.category, s.autopay ? "yes" : "no", s.lastCharged || "", s.trialDays || "", s.used30 === false ? "yes" : "", s.sharedPeople || ""]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(",")
+    )
+    .join("\n");
+  const blob = new Blob([head + rows], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "leakguard-ledger.csv";
+  a.click();
+});
+
 function serializeState() {
-  return { subs: state.subs, sources: state.sources, monthlyTotal: state.monthlyTotal, cut: state.cut };
+  return { subs: state.subs, sources: state.sources, monthlyTotal: state.monthlyTotal, cut: state.cut, history: state.history };
 }
 
 /* ============================================================
@@ -348,10 +306,9 @@ function renderDashboard() {
     state.scanStart = null;
   }
 
-  // rain follows the leak
-  rain.setIntensity(state.monthlyTotal);
   renderTimeline();
   renderSavings();
+  renderReminder();
 
   const list = document.getElementById("subscription-list");
   list.innerHTML = "";
@@ -375,8 +332,12 @@ function subCard(sub) {
   div.className = "sub-card" + (sub.kept ? " kept" : "");
   const flags = (sub.flags || [])
     .map((f) => `<span class="badge ${f}">${f}</span>`)
-    .join("");
+    .join("")
+    + (sub.used30 === false ? `<span class="badge unused">unused</span>` : "")
+    + (sub.trialDays != null ? `<span class="badge trial">trial · ${sub.trialDays}d</span>` : "")
+    + (sub.sharedPeople > 1 ? `<span class="badge duplicate">shared ×${sub.sharedPeople}</span>` : "");
   const perDay = sub.monthly / 30;
+  const trend = subTrend(sub.name);
   const details = [
     ["Billed", billLabel(sub)],
     ["Effective", `${fmt(sub.monthly)}/mo · ${fmt(sub.monthly * 12)}/yr`],
@@ -385,7 +346,11 @@ function subCard(sub) {
     ["Last charged", sub.lastCharged || "recent"],
     ["AutoPay", sub.autopay ? "on — bank pulls it automatically" : "no — manual renewal"],
     ["Cancel via", sub.cancel || "check app/bank mandate"],
-  ]
+  ];
+  if (sub.sharedPeople > 1) details.push(["Your share", `${fmt(sub.monthly / sub.sharedPeople)}/mo · split ${sub.sharedPeople} ways`]);
+  if (trend) details.push(["Trend", trend]);
+  if (sub.trialDays != null) details.push(["Trial", `${sub.trialDays} day${sub.trialDays === 1 ? "" : "s"} left${sub.trialDays <= 3 ? " — decide now!" : ""}`]);
+  const detailsHtml = details
     .map(([k, v]) => `<div class="fact"><span class="fact-k">${k}</span><span class="fact-v">${v}</span></div>`)
     .join("");
 
@@ -396,10 +361,16 @@ function subCard(sub) {
     </div>
     <p class="sub-meta">${sub.category} · ${billLabel(sub)} · saves ${fmt(sub.monthly * 12)}/yr${sub.autopay ? " · UPI AutoPay" : ""}</p>
     ${flags}
-    <div class="sub-more"><div class="sub-more-inner">${details}</div></div>
+    <div class="sub-more"><div class="sub-more-inner">${detailsHtml}</div></div>
     <div class="sub-actions">
       <button class="btn btn-danger act-cancel">Cut it</button>
       <button class="btn act-keep">Keep</button>
+    </div>
+    <div class="sub-tools">
+      <button class="chip act-used ${sub.used30 === false ? "chip-on" : ""}" title="Mark as not used in 30 days">unused?</button>
+      <button class="chip act-trial" title="Mark as free trial">trial</button>
+      <button class="chip act-share" title="Split cost with family">split</button>
+      <span class="trend" title="Price vs earlier scans">${trend || ""}</span>
     </div>`;
 
   function billLabel(s) {
@@ -436,7 +407,53 @@ function subCard(sub) {
     e.target.textContent = "Kept ✓";
     e.target.disabled = true;
   });
+
+  // usage honesty: "not used in 30 days"
+  div.querySelector(".act-used").addEventListener("click", (e) => {
+    sub.used30 = sub.used30 === false ? undefined : false;
+    finishAuditUpdate();
+  });
+
+  // free-trial: mark, or clear when tapped again
+  div.querySelector(".act-trial").addEventListener("click", (e) => {
+    if (sub.trialDays != null) {
+      sub.trialDays = null;
+      finishAuditUpdate();
+      return;
+    }
+    const raw = prompt("Days left in the free trial?", "7");
+    if (raw === null) return;
+    const days = parseInt(raw, 10);
+    if (isNaN(days) || days < 0) return alert("Enter a number of days.");
+    sub.trialDays = days;
+    finishAuditUpdate();
+  });
+
+  // family split: how many people share the cost
+  div.querySelector(".act-share").addEventListener("click", () => {
+    if (sub.sharedPeople > 1) {
+      sub.sharedPeople = null;
+      finishAuditUpdate();
+      return;
+    }
+    const raw = prompt("How many people share this?", "2");
+    if (raw === null) return;
+    const n = parseInt(raw, 10);
+    if (isNaN(n) || n < 2) return alert("Enter 2 or more.");
+    sub.sharedPeople = n;
+    finishAuditUpdate();
+  });
   return div;
+}
+
+/* price trend from scan history: ↑/↓ with first→last change */
+function subTrend(name) {
+  const snaps = state.history[name.toLowerCase()];
+  if (!snaps || snaps.length < 2) return null;
+  const first = snaps[0].monthly, last = snaps[snaps.length - 1].monthly;
+  if (last > first * 1.05) return `↑ ${Math.round(((last - first) / first) * 100)}% since first scan`;
+  if (last < first * 0.95) return `↓ ${Math.round(((first - last) / first) * 100)}% since first scan`;
+  return null;
 }
 
 function fmt(n) {
@@ -616,6 +633,12 @@ document.getElementById("undo-btn").addEventListener("click", () => {
 
 /* ---------- renewal timeline ---------- */
 function renewalDate(sub) {
+  // trials renew when the trial ends
+  if (sub.trialDays != null) {
+    const d = new Date();
+    d.setDate(d.getDate() + sub.trialDays);
+    return d;
+  }
   // lastCharged formats: d/m/yy, d/m/yyyy, d-Mon-yy — else unknown
   const m = String(sub.lastCharged || "").match(/^(\d{1,2})[-\/](\d{1,2}|[A-Za-z]{3})[-\/](\d{2,4})$/);
   if (!m) return null;
@@ -672,6 +695,152 @@ function renderSavings() {
   document.getElementById("savings-yr").textContent = `${state.cut.length} cut · ${fmt(perMo * 12)}/yr reclaimed`;
 }
 
+/* ---------- renewal reminder banner ---------- */
+function renderReminder() {
+  const bar = document.getElementById("renew-alert");
+  const soon = state.subs
+    .map((s) => ({ s, d: renewalDate(s) }))
+    .filter((x) => x.d)
+    .map((x) => ({ ...x, days: Math.ceil((x.d - new Date()) / 86400000) }))
+    .filter((x) => x.days >= 0 && x.days <= 3)
+    .sort((a, b) => a.days - b.days);
+  if (!soon.length) {
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  const first = soon[0];
+  const extra = soon.length > 1 ? ` +${soon.length - 1} more soon` : "";
+  document.getElementById("renew-text").textContent =
+    `${first.s.name} renews ${first.days === 0 ? "today" : `in ${first.days} day${first.days === 1 ? "" : "s"}`} — ${fmt(first.s.monthly)}${extra}. Cancel now?`;
+  // optional browser notification (permission asked once, on user gesture elsewhere)
+  if (window.Notification && Notification.permission === "granted" && !renderReminder._notified) {
+    renderReminder._notified = true;
+    new Notification("LeakGuard", { body: document.getElementById("renew-text").textContent });
+  }
+}
+document.getElementById("renew-notify").addEventListener("click", () => {
+  if (window.Notification && Notification.permission !== "granted") Notification.requestPermission();
+});
+
+/* ---------- theme toggle ---------- */
+function applyTheme(t) {
+  document.body.classList.toggle("abyss", t === "dark");
+  try { localStorage.setItem("leakguard-theme", t); } catch (e) {}
+}
+document.getElementById("btn-theme").addEventListener("click", () => {
+  applyTheme(document.body.classList.contains("abyss") ? "light" : "dark");
+});
+
+/* ---------- leak card image (share / download) ---------- */
+function leakCardCanvas() {
+  const c = document.createElement("canvas");
+  c.width = 1000; c.height = 560;
+  const x = c.getContext("2d");
+  // bg
+  x.fillStyle = "#e9e6f7";
+  x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = "#4a4265";
+  x.font = "700 34px monospace";
+  x.fillText("LEAKGUARD", 60, 80);
+  x.fillStyle = "#8d86ad";
+  x.font = "20px monospace";
+  x.fillText("subscription leak report", 60, 112);
+  // big number
+  x.fillStyle = "#8b5cf6";
+  x.font = "800 96px monospace";
+  x.fillText(fmt(state.monthlyTotal) + "/mo", 60, 250);
+  x.fillStyle = "#4a4265";
+  x.font = "26px monospace";
+  x.fillText(`${fmt(state.monthlyTotal * 12)} a year  ·  leak score ${leakScore(state.subs, state.monthlyTotal)}/100`, 60, 300);
+  // top leaks
+  const top = [...state.subs].sort((a, b) => b.monthly - a.monthly).slice(0, 4);
+  x.font = "24px monospace";
+  top.forEach((s, i) => {
+    x.fillStyle = PIE_COLORS[i % PIE_COLORS.length];
+    x.fillRect(60, 350 + i * 44, 18, 18);
+    x.fillStyle = "#4a4265";
+    x.fillText(`${s.name}`, 96, 368 + i * 44);
+    x.fillStyle = "#8d86ad";
+    x.fillText(`${fmt(s.monthly)}/mo`, 760, 368 + i * 44);
+  });
+  x.fillStyle = "#b3adcf";
+  x.font = "18px monospace";
+  x.fillText("scanned on-device · nothing left the phone", 60, 540);
+  return c;
+}
+document.getElementById("btn-card").addEventListener("click", async () => {
+  const canvas = leakCardCanvas();
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+  const file = new File([blob], "leakguard-card.png", { type: "image/png" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "My LeakGuard report" }); return; } catch (e) { /* user cancelled */ }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "leakguard-card.png";
+  a.click();
+});
+
+/* ---------- before/after compounding view ---------- */
+document.getElementById("btn-story").addEventListener("click", () => {
+  const el = document.getElementById("story-card");
+  if (!el.classList.contains("hidden")) { el.classList.add("hidden"); return; }
+  const cutMo = state.cut.reduce((sum, s) => sum + (s.monthly || 0), 0);
+  if (!cutMo) {
+    el.classList.remove("hidden");
+    document.getElementById("story-text").textContent = "Cut a subscription first — then this shows the year you get back.";
+    return;
+  }
+  el.classList.remove("hidden");
+  const months = [...Array(12).keys()].map((m) => cutMo * (m + 1));
+  document.getElementById("story-text").innerHTML =
+    `Cut ${fmt(cutMo)}/mo — that's <b>${fmt(months[2])}</b> by April, <b>${fmt(months[5])}</b> by July, and <b>${fmt(months[11])}</b> by next September. Same you, more money.`;
+  drawStoryChart(months);
+});
+
+function drawStoryChart(months) {
+  const cv = document.getElementById("story-chart");
+  const x = cv.getContext("2d");
+  x.clearRect(0, 0, cv.width, cv.height);
+  const max = months[months.length - 1] || 1;
+  const w = cv.width - 40, h = cv.height - 50, ox = 30, oy = 30;
+  x.strokeStyle = "#b3adcf";
+  x.beginPath();
+  x.moveTo(ox, oy + h);
+  x.lineTo(ox + w, oy + h);
+  x.stroke();
+  const grad = x.createLinearGradient(0, oy, 0, oy + h);
+  grad.addColorStop(0, "#8b5cf6");
+  grad.addColorStop(1, "#b9a8ff");
+  x.fillStyle = grad;
+  x.beginPath();
+  x.moveTo(ox, oy + h);
+  months.forEach((v, i) => {
+    const px = ox + (i / (months.length - 1)) * w;
+    const py = oy + h - (v / max) * h;
+    x.lineTo(px, py);
+  });
+  x.lineTo(ox + w, oy + h);
+  x.closePath();
+  x.globalAlpha = 0.35;
+  x.fill();
+  x.globalAlpha = 1;
+  x.strokeStyle = "#8b5cf6";
+  x.lineWidth = 3;
+  x.beginPath();
+  months.forEach((v, i) => {
+    const px = ox + (i / (months.length - 1)) * w;
+    const py = oy + h - (v / max) * h;
+    i ? x.lineTo(px, py) : x.moveTo(px, py);
+  });
+  x.stroke();
+  x.fillStyle = "#8d86ad";
+  x.font = "16px monospace";
+  x.fillText("reclaimed ₹", ox, oy + h + 18);
+  x.fillText(fmt(max), ox + w - 90, oy + h + 18);
+}
+
 /* ---------- report ---------- */
 document.getElementById("btn-generate-report").addEventListener("click", () => {
   const report = buildReport({
@@ -693,6 +862,20 @@ document.getElementById("btn-push-report").addEventListener("click", () => {
   document.getElementById("push-status").classList.remove("hidden");
 });
 
+/* ---------- touch support: tap toggles focus/details ---------- */
+if (window.matchMedia("(hover: none)").matches) {
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest(".sub-card");
+    if (!card) return;
+    // a tap on a button inside the card is a real action, not a focus toggle
+    if (e.target.closest("button")) return;
+    const wasOpen = card.classList.contains("tapped");
+    document.querySelectorAll(".sub-card.tapped").forEach((c) => c.classList.remove("tapped"));
+    if (!wasOpen) card.classList.add("tapped");
+  });
+}
+
 /* ---------- boot ---------- */
 loadState();
+applyTheme((()=>{try{return localStorage.getItem("leakguard-theme")}catch(e){return null}})() || "light");
 renderDashboard();

@@ -11,9 +11,6 @@
 </head>
 <body>
 
-  <!-- Living background: rain intensity = leak severity -->
-  <canvas id="rain" aria-hidden="true"></canvas>
-
   <main class="stage">
 
     <!-- ============ BASE VIEW: THE LEDGER (always present) ============ -->
@@ -24,6 +21,8 @@
           <h1>LeakGuard</h1>
           <p class="brand-sub" id="source-label">No sources scanned yet</p>
         </div>
+        <button class="orb-btn" id="btn-theme" title="Light/dark theme">◐</button>
+        <button class="orb-btn" id="btn-csv" title="Export CSV">⌗</button>
         <button class="orb-btn" id="btn-export" title="Export ledger (JSON)">⇩</button>
         <button class="orb-btn" id="btn-import" title="Import ledger">⇧</button>
         <input type="file" id="input-import" accept="application/json,.json" hidden />
@@ -57,6 +56,12 @@
         <div id="pie-legend" class="pie-legend"></div>
       </div>
 
+      <!-- renewal reminder banner -->
+      <div class="renew-alert hidden" id="renew-alert">
+        <span id="renew-text"></span>
+        <button id="renew-notify" title="Get browser notifications">🔔</button>
+      </div>
+
       <!-- Renewal timeline -->
       <div class="card hidden" id="timeline-card">
         <h2 class="card-title">Renewing soon</h2>
@@ -68,6 +73,13 @@
         <h2 class="card-title">Reclaimed</h2>
         <p class="savings-num" id="savings-num">₹0</p>
         <p class="savings-sub" id="savings-yr"></p>
+      </div>
+
+      <!-- Before/after story -->
+      <div class="card hidden" id="story-card">
+        <h2 class="card-title">Your year, reclaimed</h2>
+        <p class="story-text" id="story-text"></p>
+        <canvas id="story-chart" width="420" height="180"></canvas>
       </div>
 
       <!-- The entries -->
@@ -128,9 +140,11 @@
       <p class="sheet-sub">One page. Phone → laptop via Office Kit. Nothing touches a server.</p>
 
       <button class="cta" id="btn-generate-report">Generate leak report</button>
+      <button class="cta cta--ghost" id="btn-card">Share leak card (image)</button>
 
       <div class="hidden" id="report-preview">
         <pre id="report-text" class="raw-text"></pre>
+        <button class="cta cta--ghost" id="btn-story" style="margin-top:10px">Before / after</button>
         <button class="cta cta--ghost" id="btn-push-report">Push to laptop (Office Kit)</button>
         <p class="push-ok hidden" id="push-status">✓ handed to the bridge</p>
       </div>
