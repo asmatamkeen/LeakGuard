@@ -170,12 +170,14 @@ function guessName(line) {
   return best.length > 2 ? best : null;
 }
 
-/** Leak Score 0–100: 100 = no leaks. */
+/** Leak Score 0–100: 100 = no leaks, decaying smoothly with size & count. */
 function leakScore(subs, monthlyTotal) {
   if (!subs.length) return 100;
-  // Rough model: each ₹500/month of leakage and each sub costs points
-  const raw = 100 - Math.min(70, Math.round(monthlyTotal / 20)) - Math.min(30, subs.length * 5);
-  return Math.max(0, Math.min(100, raw));
+  // exponential decay on the money leak: ₹500/mo → ~57, ₹2645/mo → ~7
+  const moneyPart = 100 * Math.exp(-monthlyTotal / 900);
+  // each extra subscription multiplies away a little more (max ×0.75)
+  const countFactor = 1 - Math.min(0.25, (subs.length - 1) * 0.05);
+  return Math.max(0, Math.min(100, Math.round(moneyPart * countFactor)));
 }
 
 /** Generate the phone→laptop report text. */
