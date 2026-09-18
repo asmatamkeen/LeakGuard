@@ -725,7 +725,8 @@ document.getElementById("renew-notify").addEventListener("click", () => {
 
 /* ---------- theme toggle ---------- */
 function applyTheme(t) {
-  document.body.classList.toggle("abyss", t === "dark");
+  // dark is the default; "light" switches to the soft-violet day theme
+  document.body.classList.toggle("abyss", t === "light");
   try { localStorage.setItem("leakguard-theme", t); } catch (e) {}
 }
 document.getElementById("btn-theme").addEventListener("click", () => {
@@ -738,19 +739,19 @@ function leakCardCanvas() {
   c.width = 1000; c.height = 560;
   const x = c.getContext("2d");
   // bg
-  x.fillStyle = "#e9e6f7";
+  x.fillStyle = "#12101b";
   x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = "#4a4265";
+  x.fillStyle = "#eae7f5";
   x.font = "700 34px monospace";
   x.fillText("LEAKGUARD", 60, 80);
-  x.fillStyle = "#8d86ad";
+  x.fillStyle = "#9a95b0";
   x.font = "20px monospace";
   x.fillText("subscription leak report", 60, 112);
   // big number
   x.fillStyle = "#8b5cf6";
   x.font = "800 96px monospace";
   x.fillText(fmt(state.monthlyTotal) + "/mo", 60, 250);
-  x.fillStyle = "#4a4265";
+  x.fillStyle = "#eae7f5";
   x.font = "26px monospace";
   x.fillText(`${fmt(state.monthlyTotal * 12)} a year  ·  leak score ${leakScore(state.subs, state.monthlyTotal)}/100`, 60, 300);
   // top leaks
@@ -759,12 +760,12 @@ function leakCardCanvas() {
   top.forEach((s, i) => {
     x.fillStyle = PIE_COLORS[i % PIE_COLORS.length];
     x.fillRect(60, 350 + i * 44, 18, 18);
-    x.fillStyle = "#4a4265";
+    x.fillStyle = "#eae7f5";
     x.fillText(`${s.name}`, 96, 368 + i * 44);
-    x.fillStyle = "#8d86ad";
+    x.fillStyle = "#9a95b0";
     x.fillText(`${fmt(s.monthly)}/mo`, 760, 368 + i * 44);
   });
-  x.fillStyle = "#b3adcf";
+  x.fillStyle = "#6b6584";
   x.font = "18px monospace";
   x.fillText("scanned on-device · nothing left the phone", 60, 540);
   return c;
@@ -862,20 +863,133 @@ document.getElementById("btn-push-report").addEventListener("click", () => {
   document.getElementById("push-status").classList.remove("hidden");
 });
 
-/* ---------- touch support: tap toggles focus/details ---------- */
+/* ============================================================
+   CINEMATIC FOCUS MODE — hover (desktop) or tap (touch) floats
+   the card above a heavy blur scrim, with an inline savings chart.
+   ============================================================ */
+const focusScrim = document.createElement("div");
+focusScrim.className = "focus-scrim";
+document.body.appendChild(focusScrim);
+
+let focusedCard = null;
+let focusPlaceholder = null;
+let hoverLock = false; // grace period after closing so hover doesn't re-trigger
+
+function focusCard(card) {
+  if (focusedCard === card) return;
+  unfocusCard();
+  focusedCard = card;
+  focusPlaceholder = document.createComment("card-slot");
+  card.before(focusPlaceholder);
+  document.body.appendChild(card);
+  drawFocusChart(card.querySelector(".sub-more .fact") ? card : null);
+  card.classList.add("focused");
+  focusScrim.classList.add("on");
+}
+
+function unfocusCard() {
+  if (!focusedCard) return;
+  focusedCard.classList.remove("focused");
+  // chart lives only while focused
+  focusedCard.querySelector(".sub-focus-chart")?.remove();
+  focusedCard.querySelector(".chart-cap")?.remove();
+  focusPlaceholder.replaceWith(focusedCard);
+  focusedCard = null;
+  focusPlaceholder = null;
+  focusScrim.classList.remove("on");
+  hoverLock = true;
+  setTimeout(() => (hoverLock = false), 350);
+}
+
+focusScrim.addEventListener("click", unfocusCard);
+document.addEventListener("keydown", (e) => e.key === "Escape" && unfocusCard());
+
+/* inline analytics: savings trajectory for this subscription */
+function drawFocusChart(card) {
+  if (!card) return;
+  let cv = card.querySelector(".sub-focus-chart");
+  if (!cv) {
+    cv = document.createElement("canvas");
+    cv.className = "sub-focus-chart";
+    cv.width = 420; cv.height = 130;
+    const cap = document.createElement("p");
+    cap.className = "chart-cap";
+    card.querySelector(".sub-more").after(cv, cap);
+  }
+  const x = cv.getContext("2d");
+  const monthly = Number(card.querySelector(".act-edit")?.textContent.replace(/[^0-9.]/g, "")) || 0;
+  if (!monthly) return;
+  const months = [...Array(12).keys()].map((m) => monthly * (m + 1));
+  const max = months[months.length - 1];
+  x.clearRect(0, 0, cv.width, cv.height);
+  const w = cv.width - 60, h = cv.height - 50, ox = 40, oy = 16;
+  // baseline + month gridlines
+  x.strokeStyle = getComputedStyle(document.body).getPropertyValue("--edge") || "rgba(255,255,255,0.1)";
+  x.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const gy = oy + (i / 4) * h;
+    x.beginPath(); x.moveTo(ox, gy); x.lineTo(ox + w, gy); x.stroke();
+  }
+  // area
+  const grad = x.createLinearGradient(0, oy, 0, oy + h);
+  grad.addColorStop(0, "rgba(139, 92, 246, 0.55)");
+  grad.addColorStop(1, "rgba(139, 92, 246, 0.06)");
+  x.fillStyle = grad;
+  x.beginPath();
+  x.moveTo(ox, oy + h);
+  months.forEach((v, i) => x.lineTo(ox + (i / 11) * w, oy + h - (v / max) * h));
+  x.lineTo(ox + w, oy + h);
+  x.closePath();
+  x.fill();
+  // line — brighter violet on dark, deeper violet on light theme
+  const light = document.body.classList.contains("abyss");
+  x.strokeStyle = light ? "#6d3fd4" : "#a78bfa";
+  x.lineWidth = 3.5;
+  x.lineJoin = "round";
+  x.shadowColor = "rgba(139, 92, 246, 0.8)";
+  x.shadowBlur = 10;
+  x.beginPath();
+  months.forEach((v, i) => {
+    const px = ox + (i / 11) * w, py = oy + h - (v / max) * h;
+    i ? x.lineTo(px, py) : x.moveTo(px, py);
+  });
+  x.stroke();
+  x.shadowBlur = 0;
+  // end dot + labels
+  const ex = ox + w, ey = oy + h;
+  x.fillStyle = "#c4b5fd";
+  x.beginPath(); x.arc(ex, ey, 5, 0, Math.PI * 2); x.fill();
+  x.fillStyle = getComputedStyle(document.body).getPropertyValue("--ink") || "#eae7f5";
+  x.font = "700 15px monospace";
+  x.fillText("if kept", ox - 28, oy + h + 26);
+  x.fillText(`₹${fmt(monthly * 12)}/yr`, ox + w - 70, oy + h + 26);
+  const cap = card.querySelector(".chart-cap");
+  if (cap) cap.textContent = "cost trajectory — 12 months";
+}
+
+// desktop: hover triggers focus; moving onto the scrim releases it
+if (window.matchMedia("(hover: hover)").matches) {
+  document.addEventListener("mouseover", (e) => {
+    if (hoverLock) return;
+    const card = e.target.closest?.(".sub-card");
+    if (card && !card.classList.contains("focused")) focusCard(card);
+  });
+  // hovering anywhere outside the focused card closes it
+  focusScrim.addEventListener("mouseover", () => unfocusCard());
+}
+
+// touch: tap toggles focus
 if (window.matchMedia("(hover: none)").matches) {
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".sub-card");
-    if (!card) return;
-    // a tap on a button inside the card is a real action, not a focus toggle
-    if (e.target.closest("button")) return;
-    const wasOpen = card.classList.contains("tapped");
-    document.querySelectorAll(".sub-card.tapped").forEach((c) => c.classList.remove("tapped"));
-    if (!wasOpen) card.classList.add("tapped");
+    if (!card || e.target.closest("button")) return;
+    card.classList.contains("focused") ? unfocusCard() : focusCard(card);
   });
 }
 
 /* ---------- boot ---------- */
 loadState();
-applyTheme((()=>{try{return localStorage.getItem("leakguard-theme")}catch(e){return null}})() || "light");
+applyTheme((()=>{try{return localStorage.getItem("leakguard-theme")}catch(e){return null}})() || "dark");
 renderDashboard();
+// closing sheets/scrolling shouldn't leave a stale focused card behind
+window.addEventListener("scroll", () => focusedCard && unfocusCard(), { passive: true });
