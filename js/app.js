@@ -967,15 +967,22 @@ function drawFocusChart(card) {
   if (cap) cap.textContent = "cost trajectory — 12 months";
 }
 
-// desktop: hover triggers focus; moving onto the scrim releases it
+// desktop: hover triggers focus. The scrim does NOT auto-close on hover —
+// the card teleports to center, so the cursor lands on the scrim right
+// after focusing; auto-closing there caused a focus/unfocus flicker that
+// rendered the card permanently washed-out. Close via click, Esc, or
+// hovering a different card.
 if (window.matchMedia("(hover: hover)").matches) {
   document.addEventListener("mouseover", (e) => {
     if (hoverLock) return;
     const card = e.target.closest?.(".sub-card");
-    if (card && !card.classList.contains("focused")) focusCard(card);
+    if (card && card !== focusedCard && !card.classList.contains("focused")) focusCard(card);
   });
-  // hovering anywhere outside the focused card closes it
-  focusScrim.addEventListener("mouseover", () => unfocusCard());
+  // hovering over the pie/chart/anything that is NOT a card releases focus
+  document.addEventListener("mouseover", (e) => {
+    if (!focusedCard || hoverLock) return;
+    if (!e.target.closest?.(".sub-card")) unfocusCard();
+  });
 }
 
 // touch: tap toggles focus
